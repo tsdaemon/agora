@@ -1,4 +1,16 @@
-# Agora
+<p align="center">
+  <img src="docs/logo.png" alt="Agora logo" width="200">
+</p>
+
+<h1 align="center">Agora</h1>
+
+<p align="center">
+  <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-orange">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.x-3776AB?logo=python&logoColor=white">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-server-blue">
+  <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-success">
+  <img alt="Marketplace: OLX Ukraine" src="https://img.shields.io/badge/marketplace-OLX%20Ukraine-23e5db">
+</p>
 
 A self-hosted [MCP](https://modelcontextprotocol.io) server that lets an AI agent search, create and manage listings on online Ukrainian marketplaces, through one marketplace-neutral tool surface.
 
@@ -6,7 +18,7 @@ A self-hosted [MCP](https://modelcontextprotocol.io) server that lets an AI agen
 
 ## Status
 
-Pre-alpha. Design and first task only, no code yet. Python, served over Streamable HTTP, targeting ChatGPT as the client. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/tasks/`](docs/tasks/).
+Pre-alpha. A dummy server (`ping` tool) with Keycloak token validation exists, to prove the ChatGPT connector chain. No marketplace adapters yet. Python and [FastMCP](https://gofastmcp.com), served over Streamable HTTP, targeting ChatGPT as the client. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/tasks/`](docs/tasks/).
 
 ## Goals
 
@@ -23,9 +35,23 @@ Pre-alpha. Design and first task only, no code yet. Python, served over Streamab
 - Buying, payments or messaging on the user's behalf (may be reconsidered later).
 - A hosted multi-tenant service. Agora is single-user and self-hosted.
 
+## Development
+
+Needs Python 3.12+, [uv](https://docs.astral.sh/uv/) and [Task](https://taskfile.dev).
+
+```
+cp .env.sample .env    # fill in your values
+task setup             # install dependencies
+task check             # lint, type-check, test
+task dev               # run the server
+task deploy            # build and deploy with the overlay
+```
+
 ## Layout
 
 ```
+src/agora/         server, auth, config
+tests/             pytest suite
 docs/DESIGN.md     architecture, tool surface, security model
 docs/tasks/        task ledger (one file per task, index in README)
 AGENTS.md          instructions for AI coding agents working on this repo

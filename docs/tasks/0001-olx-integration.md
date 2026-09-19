@@ -35,8 +35,8 @@ Ship the first working Agora adapter: OLX Ukraine (olx.ua), through its official
 
 ### 2. Scaffold
 
-- [ ] `pyproject.toml`, `uv.lock`, Python 3.12+, `src/agora` layout, ruff, mypy strict, pytest, pinned deps.
-- [ ] Update the Commands section in `AGENTS.md`.
+- [x] `pyproject.toml`, `uv.lock`, Python 3.12+, `src/agora` layout, ruff, mypy strict, pytest, pinned deps.
+- [x] Update the Commands section in `AGENTS.md`.
 - [ ] Config loader with pydantic-settings or plain pydantic and `_FILE` secret support.
 
 ### 3. Core
@@ -80,7 +80,9 @@ Ship the first working Agora adapter: OLX Ukraine (olx.ua), through its official
 
 ## Log
 
-- 2026-09-19: Hostnames fixed: `agora.tsd.lol`, `keycloak.tsd.lol`. Tracked in Notion (Digital Home, project Agora) as three tasks: Keycloak, OLX API app registration, OLX MCP server.
+- 2026-09-19: Scaffold done (uv, ruff, mypy strict, pytest, Taskfile, Dockerfile, deploy overlay). Switched to FastMCP 4 (built on `mcp` 2.x) at the user's request. A dummy `ping` server with owner-only Keycloak JWT validation passes 26 tests. Not yet deployed.
+
+- 2026-09-19: Hostnames fixed: `agora.example.com`, `keycloak.example.com`. Tracked in Notion (Digital Home, project Agora) as three tasks: Keycloak, OLX API app registration, OLX MCP server.
 
 - 2026-09-19: Task created. The previous project, the `l-margiela/olx-mcp` fork, was audited and abandoned because it scrapes with Chromium (`--no-sandbox`) and cannot create listings.
 - 2026-09-19: Scope narrowed to Ukrainian marketplaces only (OLX UA first). Added image staging for images shared in the conversation (DESIGN 4.1).

@@ -1,0 +1,64 @@
+version: "3"
+
+# .env holds local settings (copy from .env.sample). Later files win.
+dotenv: [".env"]
+
+tasks:
+  default:
+    cmds: [task --list]
+    silent: true
+
+  setup:
+    desc: Install dependencies
+    cmds: [uv sync]
+
+  dev:
+    desc: Run the server locally (needs .env)
+    cmds: [uv run python -m agora]
+
+  test:
+    desc: Run tests
+    cmds: [uv run pytest]
+
+  lint:
+    desc: Lint and check formatting
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+
+  fmt:
+    desc: Format code
+    cmds:
+      - uv run ruff check --fix .
+      - uv run ruff format .
+
+  types:
+    desc: Type-check
+    cmds: [uv run mypy]
+
+  check:
+    desc: Lint, type-check and test
+    cmds:
+      - task: lint
+      - task: types
+      - task: test
+
+  up:
+    desc: Run the container locally (needs .env)
+    cmds: [docker compose up --build]
+
+  # Deploy to theseus: base compose + deploy overlay, values from .env.
+  deploy:
+    desc: Build and deploy to theseus
+    cmds:
+      - docker --context theseus compose -f docker-compose.yml -f docker-compose.deploy.yml up -d --build
+
+  deploy:down:
+    desc: Stop the deployment on theseus
+    cmds:
+      - docker --context theseus compose -f docker-compose.yml -f docker-compose.deploy.yml down
+
+  deploy:logs:
+    desc: Tail logs from theseus
+    cmds:
+      - docker --context theseus compose -f docker-compose.yml -f docker-compose.deploy.yml logs -f --tail=100 agora

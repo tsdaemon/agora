@@ -85,6 +85,8 @@ Marketplace-neutral, all take a `marketplace` argument (an adapter id).
 | `listing_deactivate_preview` | plan | Same, for deactivate/delete |
 | `write_confirm` | write | Executes a previously previewed plan given its token |
 
+The server uses stateless JSON responses (`stateless_http`, `json_response`): there are no server-initiated messages, so no long-lived SSE stream for Cloudflare or a proxy to buffer or cut.
+
 Two-step writes are deliberate: there is no single tool that mutates remote state from raw agent input. The client is expected to show the preview to the user and get approval before calling `write_confirm`.
 
 ### 4.1 Images from the conversation
@@ -123,7 +125,7 @@ Mitigations:
 - **Least privilege.** Request the minimum OAuth scopes per operation. Read-only mode requests read scopes only.
 - **Rate limiting** and retry with backoff in the shared HTTP client. Honour `Retry-After`. Hard cap on retries.
 - **Supply chain.** Few dependencies, pinned, `uv sync --frozen`, lockfile committed, `pip-audit` in CI.
-- **Deployment.** Container runs as non-root, read-only rootfs, `--cap-drop ALL`, and the HTTP port reachable only via Traefik. ChatGPT calls the connector from OpenAI's cloud, so the `/mcp` endpoint must be reachable over public HTTPS. Decided: a Cloudflare Tunnel (`cloudflared` on theseus, outbound connection only, no inbound ports or router port forward; Cloudflare terminates TLS and forwards to Traefik on the internal network). No Cloudflare Access policy may sit in front of these hostnames. Every request must carry a valid OAuth access token (section 7), verified for signature, expiry, issuer and audience. Validate `Origin` and `Host` against an allow-list. Expose only `/mcp` and the OAuth metadata paths. Traefik trusts forwarded headers only from `cloudflared`. Restricting to OpenAI's published egress IPs is UNVERIFIED and probably impractical behind Cloudflare.
+- **Deployment.** Container runs as non-root, read-only rootfs, `--cap-drop ALL`, and the HTTP port reachable only via Traefik. ChatGPT calls the connector from OpenAI's cloud, so the `/mcp` endpoint must be reachable over public HTTPS. Decided: a Cloudflare Tunnel (`cloudflared` on theseus, outbound connection only, no inbound ports or router port forward; Cloudflare terminates TLS and forwards to Traefik on the internal network). No Cloudflare Access policy may sit in front of these hostnames. Every request must carry a valid OAuth access token (section 7), verified for signature, expiry, issuer and audience. Validate `Host` against an allow-list on every route (no cookies or browser-held credentials are used, so an Origin check adds little; FastMCP's own guard covers `/mcp`). Expose only `/mcp` and the OAuth metadata paths. Traefik trusts forwarded headers only from `cloudflared`. Restricting to OpenAI's published egress IPs is UNVERIFIED and probably impractical behind Cloudflare.
 - **Egress.** The marketplace API hosts, plus the HTTPS hosts serving ChatGPT file download URLs (UNVERIFIED which; do not hard-code, learn from testing) and the OAuth provider. SSRF guards in 4.1 apply.
 
 ## 6. Configuration
@@ -136,10 +138,10 @@ Environment variables (secrets via `_FILE` variants):
 | `AGORA_WRITES` | `enabled` to allow writes, otherwise read-only |
 | `AGORA_MAX_WRITES_PER_DAY` | Write cap |
 | `AGORA_DATA_DIR` | Token store and state |
-| `AGORA_PUBLIC_URL` | Public HTTPS base URL, used as OAuth resource/audience. `https://agora.tsd.lol` |
-| `AGORA_OAUTH_ISSUER` | Keycloak realm issuer URL whose tokens are accepted. `https://keycloak.tsd.lol/realms/home` |
+| `AGORA_PUBLIC_HOST` | Public hostname, no scheme (always served over HTTPS). `https://<host>` is the OAuth audience and base of the metadata URLs, e.g. `agora.example.com` |
+| `AGORA_OAUTH_ISSUER` | Keycloak realm issuer URL whose tokens are accepted, e.g. `https://keycloak.example.com/realms/home` |
 | `AGORA_OWNER_SUBJECT` | The Keycloak `sub` of the one allowed user |
-| `AGORA_BIND`, `AGORA_ALLOWED_ORIGINS` | Listen address and allowed Origin/Host values |
+| `AGORA_PORT`, `AGORA_EXTRA_ALLOWED_HOSTS`, `AGORA_ALLOWED_ORIGINS` | Listen port, extra allowed Host values, allowed Origin values |
 | `AGORA_MAX_IMAGE_BYTES`, `AGORA_MAX_IMAGES_PER_LISTING` | Image caps |
 | `OLX_UA_CLIENT_ID`, `OLX_UA_CLIENT_SECRET` | OAuth app credentials (UNVERIFIED naming of what OLX issues) |
 
@@ -152,15 +154,17 @@ Decision: a self-hosted **Keycloak** on theseus is the authorization server (the
 
 - **Identity lives in Keycloak, not in Google.** The owner is a local Keycloak user. Google is attached as an external identity provider (identity brokering) purely as one login method, linked to that existing user. Self-registration is disabled and Google login must not auto-create users. To leave Google later: unlink the provider. Agora is unaffected because it trusts Keycloak's `sub`, never Google's.
 - **Break-glass from day one:** give the owner a local credential (passkey, or password plus TOTP) in Keycloak, so losing Google access does not lock out the server.
-- **Agora validates** each request's JWT: signature via Keycloak's JWKS, issuer (`AGORA_OAUTH_ISSUER`), audience equal to `AGORA_PUBLIC_URL`, expiry, and `sub` equal to `AGORA_OWNER_SUBJECT`. It serves `/.well-known/oauth-protected-resource` pointing at Keycloak as the authorization server.
+- **Agora validates** each request's JWT: signature via Keycloak's JWKS, issuer (`AGORA_OAUTH_ISSUER`), audience equal to `https://<AGORA_PUBLIC_HOST>`, expiry, and `sub` equal to `AGORA_OWNER_SUBJECT`. It serves `/.well-known/oauth-protected-resource` pointing at Keycloak as the authorization server.
 - **ChatGPT registration:** Keycloak's DCR endpoint (`/realms/<realm>/clients-registrations/openid-connect`), restricted with client registration policies to ChatGPT's redirect URIs. UNVERIFIED: whether ChatGPT needs CIMD instead, and how Keycloak binds the audience (`resource` parameter); an audience mapper may be needed.
 - **Exposure:** Keycloak's public surface is limited to the realm's OAuth/OIDC paths. The admin console is not exposed publicly (internal network or VPN only).
-- **Hostnames:** `keycloak.tsd.lol` and `agora.tsd.lol` (domain `tsd.lol`, DNS in Cloudflare). OLX callback: `https://agora.tsd.lol/oauth/olx/callback`.
+- **Hostnames (example values; the real ones live only in the local `.env`):** `keycloak.example.com` and `agora.example.com` (DNS in Cloudflare). OLX callback: `https://agora.example.com/oauth/olx/callback`.
+- **Verified with the real ChatGPT (2026-09-19):** DCR works (CIMD off); redirect URI `https://chatgpt.com/connector_platform_oauth_redirect`; PKCE S256; token `aud` = the origin while the metadata `resource` is `<origin>/mcp` (accepted); ChatGPT requires the RFC 8414 metadata URL `/.well-known/oauth-authorization-server/<realm path>` to be publicly reachable. ChatGPT calls from OpenAI's published egress ranges (`https://openai.com/chatgpt-connectors.json`) with an `aiohttp` user agent.
+- **Cloudflare:** Bot Fight Mode challenges OpenAI's server-side requests (403 to the client). On the Free plan WAF Skip rules cannot skip it, so it has to be disabled, or the OpenAI ranges allowed by IP Access Rules, or the hostnames moved to a zone without it.
 - **Spike first** (task 0002): a ChatGPT connector against Keycloak with a dummy tool must work end to end before marketplace work depends on it.
 - **Fallback** if the spike fails: an embedded thin authorization server in Agora, delegating login to Google.
 - Other self-hosted options were considered (Authentik, Zitadel, Ory Hydra, Authelia, Pocket ID). Keycloak is the only one confirmed to work as an MCP authorization server; the others are UNVERIFIED for DCR.
 
-**Agora to marketplace (outbound).** OAuth2 per marketplace. For OLX, the developer portal's "Add app" form (Ukrainian UI) asks for app name, website URL, **callback URI (required)** and description. Plan: callback URI is `<AGORA_PUBLIC_URL>/oauth/olx/callback`, served by Agora itself, since it is public anyway. The consent flow is started only from an authenticated owner session, uses a random single-use `state` bound to that session, and the resulting tokens go to the token store, never to the model. Fall back to a `localhost` callback with the CLI only if OLX allows it (UNVERIFIED). The app name entered is "Agora". UNVERIFIED for OLX: which grant types are available (authorization code with user consent versus client credentials), whether refresh tokens are issued, token lifetimes, and whether a private user can register an app. A one-time CLI command (`agora auth <marketplace>`) performs the interactive consent on a machine with a browser and writes tokens to the data dir. The server itself never opens a browser.
+**Agora to marketplace (outbound).** OAuth2 per marketplace. For OLX, the developer portal's "Add app" form (Ukrainian UI) asks for app name, website URL, **callback URI (required)** and description. Plan: callback URI is `https://<AGORA_PUBLIC_HOST>/oauth/olx/callback`, served by Agora itself, since it is public anyway. The consent flow is started only from an authenticated owner session, uses a random single-use `state` bound to that session, and the resulting tokens go to the token store, never to the model. Fall back to a `localhost` callback with the CLI only if OLX allows it (UNVERIFIED). The app name entered is "Agora". UNVERIFIED for OLX: which grant types are available (authorization code with user consent versus client credentials), whether refresh tokens are issued, token lifetimes, and whether a private user can register an app. A one-time CLI command (`agora auth <marketplace>`) performs the interactive consent on a machine with a browser and writes tokens to the data dir. The server itself never opens a browser.
 
 ## 8. Deployment
 
@@ -178,6 +182,6 @@ Target: the `theseus` home NAS as a Docker container. Transport is Streamable HT
 2. ~~Which country?~~ Resolved: Ukraine only, for now.
 3. Image upload for new listings: what the OLX UA API accepts (URLs versus multipart), and whether ChatGPT file params work reliably for images (see 4.1).
 4. Category attribute schemas: OLX categories require category-specific fields. How much of this do we model versus pass through as validated key-value pairs?
-5. ~~Language/runtime~~ Resolved: Python 3.12+ with the official `mcp` SDK.
+5. ~~Language/runtime~~ Resolved: Python 3.12+ with FastMCP (built on the official MCP SDK).
 6. ~~Inbound identity provider~~ Decided: Keycloak, with Google as a brokered login method (section 7). Still to verify in the spike: DCR versus CIMD, and audience binding.
-7. ~~Public exposure~~ Decided: Cloudflare Tunnel, hostnames `agora.tsd.lol` and `keycloak.tsd.lol`. To test: SSE/streaming behaviour through Cloudflare, and that Cloudflare bot/WAF settings do not block OpenAI.
+7. ~~Public exposure~~ Decided: Cloudflare Tunnel, hostnames `agora.example.com` and `keycloak.example.com`. To test: SSE/streaming behaviour through Cloudflare, and that Cloudflare bot/WAF settings do not block OpenAI.

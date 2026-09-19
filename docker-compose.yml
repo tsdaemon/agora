@@ -1,0 +1,17 @@
+# Base: what also runs locally (`task up`). Deploy-only config lives in docker-compose.deploy.yml.
+services:
+  agora:
+    build: .
+    environment:
+      AGORA_PUBLIC_HOST: ${AGORA_PUBLIC_HOST:?set in .env}
+      AGORA_OAUTH_ISSUER: ${AGORA_OAUTH_ISSUER:?set in .env}
+      AGORA_OWNER_SUBJECT: ${AGORA_OWNER_SUBJECT:?set in .env}
+      AGORA_AUDIENCE: ${AGORA_AUDIENCE:-}
+      AGORA_EXTRA_ALLOWED_HOSTS: ${AGORA_EXTRA_ALLOWED_HOSTS:-[]}
+      AGORA_PORT: ${AGORA_PORT:-6492}
+    ports:
+      - "127.0.0.1:${AGORA_PORT:-6492}:${AGORA_PORT:-6492}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
