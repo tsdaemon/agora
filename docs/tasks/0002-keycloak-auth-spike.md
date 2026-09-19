@@ -34,7 +34,7 @@ Prove that a ChatGPT custom connector can authenticate against a self-hosted Key
 
 ## Log
 
-- 2026-09-19: ChatGPT connector completed login (DCR, PKCE S256, redirect `https://chatgpt.com/connector_platform_oauth_redirect`) and sent authenticated `POST /mcp` with a real Keycloak token (200). Fixes needed on the way: publicly route the RFC 8414 metadata URL at Keycloak; Cloudflare Bot Fight Mode blocked the registration POST. Details in DESIGN section 7. Still open: confirm `ping` from ChatGPT, image file params on web and mobile, realm export and restore test.
+- 2026-09-19: ChatGPT connector completed login (DCR, PKCE S256, redirect `https://chatgpt.com/connector_platform_oauth_redirect`) and sent authenticated `POST /mcp` with a real Keycloak token (200). Fixes needed on the way: publicly route the RFC 8414 metadata URL at Keycloak; Cloudflare Bot Fight Mode blocked the registration POST. Details in DESIGN section 7. Owner confirmed `ping` returns `pong` in ChatGPT. Still open: image file params on web and mobile, realm export and restore test.
 
 - 2026-09-19: Keycloak deployed (see Notion findings). Agora-side dummy `ping` server written and tested locally (owner-only JWT validation, 401 with protected-resource metadata, Host allow-list). Remaining: deploy to the NAS, add the Cloudflare tunnel route, test with the real ChatGPT connector.
 

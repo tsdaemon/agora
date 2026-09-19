@@ -3,7 +3,7 @@
 # Traefik discovers this container over the Docker socket (no shared network). One router, public
 # via the Cloudflare Tunnel on web_cloudflare (127.0.0.1:8081). Only the MCP endpoint and OAuth
 # metadata are routed; everything else 404s. Everything on web_cloudflare is public, so add paths
-# here deliberately. There is deliberately no LAN-only router.
+# here deliberately. There is deliberately no LAN-only router and no Homepage tile.
 # The tunnel public hostname agora.example.com -> http://127.0.0.1:8081 is set in the Cloudflare
 # Zero Trust dashboard (not in this repo).
 services:
@@ -22,9 +22,3 @@ services:
       traefik.http.routers.agora-public.middlewares: "agora-https"
       # The tunnel hop is plain HTTP; without this the app would see http and build wrong URLs.
       traefik.http.middlewares.agora-https.headers.customrequestheaders.X-Forwarded-Proto: "https"
-
-      homepage.group: Applications
-      homepage.name: Agora
-      homepage.icon: mdi-storefront
-      homepage.href: "https://${AGORA_PUBLIC_HOST}"
-      homepage.description: MCP server for Ukrainian marketplaces

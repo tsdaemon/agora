@@ -52,6 +52,7 @@ task deploy            # build and deploy with the overlay
 ```
 src/agora/         server, auth, config
 tests/             pytest suite
+docs/FLOWS.md      sequence diagrams of the auth and listing flows
 docs/DESIGN.md     architecture, tool surface, security model
 docs/tasks/        task ledger (one file per task, index in README)
 AGENTS.md          instructions for AI coding agents working on this repo
