@@ -4,7 +4,7 @@ Instructions for AI coding agents working on Agora. Read `README.md` and `docs/D
 
 ## What this project is
 
-A self-hosted MCP server exposing a marketplace-neutral tool surface (search, get, create, update, deactivate listings). Each marketplace is an adapter behind a common interface. OLX Ukraine is first. Scope is Ukrainian marketplaces only, for now; do not add other countries.
+A self-hosted MCP server that lets ChatGPT create new listings on OLX Ukraine through OLX's official Partner API, behind a confirmation gate. Scope (decided 2026-09-20): OLX Ukraine only, creating listings only. OLX's API has no search, so there is no search tool. Read-only message threads are in scope. Do not add other marketplaces, other countries, sending or managing messages, or update/deactivate/delete without being asked; see `docs/DESIGN.md`.
 
 ## Ground rules
 
@@ -18,23 +18,24 @@ A self-hosted MCP server exposing a marketplace-neutral tool surface (search, ge
 ## Stack
 
 - Python 3.12+, fully type-annotated, managed with `uv` (`pyproject.toml`, `uv.lock`), `src/` layout.
-- `fastmcp` for the server and token verification, `pydantic` v2 and `pydantic-settings`. Add `httpx` explicitly only when an adapter needs an HTTP client.
+- `fastmcp` for the server and token verification, `pydantic` v2 and `pydantic-settings`. Add `httpx` explicitly when the OLX client needs an HTTP client.
 - `pytest` for tests. `ruff` for lint and format, `mypy --strict` for types.
 - Transport: Streamable HTTP only (see DESIGN). No stdio mode. Target client: official ChatGPT, so inbound auth is OAuth 2.1, not a static token.
 
 ## Workflow
 
-- Work is tracked in `docs/tasks/`. One file per task, named `NNNN-slug.md`, indexed in `docs/tasks/README.md`.
-- Pick the lowest-numbered task with status `todo` unless told otherwise. Set it to `in-progress` when you start and `done` when its acceptance criteria are met.
-- Tick checklist items as you complete them and add a dated line to the task's **Log** section. Record decisions and dead ends there, not only outcomes.
-- If a task is blocked on a human decision or credential, set `blocked`, say exactly what is needed, and stop.
+- Work is tracked in Notion, not in the repo: the Digital Home Tasks database (https://app.notion.com/p/75be70527e3140458fbb3230cf6570b6), filtered to project **Agora**. Follow the Digital Home `AGENTS.md` page for the schema and rules; ask before changing the database schema.
+- Pick the task the user names, or the highest-priority `To do` Agora task. Set `Status` to `Doing` when you start and `Done` when its acceptance criteria are met.
+- Tick checklist items on the task page as you complete them and add a dated line to its **Log** section. Record decisions and dead ends there, not only outcomes.
+- If a task is blocked on a human decision or credential, say exactly what is needed on the task page and stop.
 - Keep changes scoped to the task. Put unrelated findings in a new task instead of fixing them in passing.
+- Never put secrets, tokens or real user IDs in Notion.
 
 ## Code conventions
 
-- Adapters live in `src/agora/adapters/<marketplace>/` and implement the `MarketplaceAdapter` interface. Core code must not import from an adapter directory.
+- OLX-specific code (client, OAuth, models, mapping) lives in `src/agora/olx/`. The gate, sanitiser, staging and server code must not import from it except at the wiring point.
 - Every external response is parsed with a pydantic model at the boundary. No `Any` in signatures.
-- Tests use recorded fixtures of API responses in `test/fixtures/<marketplace>/`. Tests must never hit the network. Strip tokens and personal data from fixtures.
+- Tests use recorded fixtures of API responses in `tests/fixtures/olx/`. Tests must never hit the network. Strip tokens and personal data from fixtures.
 - Errors returned to the model are short and actionable, with no stack traces or upstream response bodies.
 
 ## Commands

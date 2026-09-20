@@ -2,19 +2,19 @@
 
 Status: draft v0. Anything marked `UNVERIFIED` must be confirmed against official marketplace docs before it is relied on.
 
-Scope: Ukrainian marketplaces only, for now. OLX Ukraine (olx.ua) is first. Other countries are out of scope.
+Scope (decided 2026-09-20): **OLX Ukraine only, and only creating new listings.** OLX's official Partner API manages the user's own account and has no search or read access to other users' listings (verified, see section 7), so a marketplace-neutral search tool is not possible and a multi-marketplace abstraction is not worth building now. Read-only access to the owner's message threads (OLX Threads API, see section 7) is in scope, so the agent can see buyer questions. Not in scope: search, sending or managing messages, update, deactivate and delete of listings, other marketplaces, other countries. If a second marketplace ever needs supporting, introduce an adapter interface then, with two concrete implementations to shape it.
 
 Sequence diagrams of the main flows: [FLOWS.md](FLOWS.md).
 
 ## 1. Problem
 
-An AI agent should be able to find items and manage the user's own listings on marketplaces. Existing MCP servers for this scrape sites with a headless browser: heavy, fragile, insecure (sandbox disabled, live untrusted pages) and unable to safely post. Agora talks to official APIs only.
+An AI agent should be able to post the user's items for sale on OLX Ukraine. Existing MCP servers for this scrape sites with a headless browser: heavy, fragile, insecure (sandbox disabled, live untrusted pages) and unable to safely post. Agora talks to official APIs only.
 
 ## 2. Principles
 
 1. Official, authenticated APIs. No scraping, no browser.
-2. One neutral tool surface. The agent shouldn't need to know which marketplace it is talking to, except where features genuinely differ.
-3. Explicit capabilities. An adapter declares what it supports, and unsupported operations fail clearly instead of being emulated.
+2. A small tool surface: only what creating a listing needs.
+3. Unsupported operations fail clearly instead of being emulated.
 4. Human-in-the-loop for writes.
 5. Least privilege: minimal OAuth scopes, non-root container, and the smallest inbound exposure that ChatGPT's connector model allows (see 5 and 8).
 
@@ -25,66 +25,36 @@ MCP client (official ChatGPT, developer-mode custom connector)
         |  Streamable HTTP over public HTTPS, OAuth 2.1 access token
         v
 +-------------------------------+
-| MCP server (src/server)       |  tool registration, pydantic validation,
+| MCP server (src/agora/server) |  tool registration, pydantic validation,
 |                               |  output sanitising, confirmation gate
 +---------------+---------------+
                 |
-        MarketplaceRegistry
+        OLX client (src/agora/olx)
                 |
-   +------------+------------+
-   v            v            v
- OLX adapter  (future)    (future)      src/adapters/<name>/
-   |
-   v
- HTTP client (httpx) + OAuth token store + rate limiter
+   httpx + OAuth token store + rate limiter
 ```
 
-Modules:
+Package `agora` under `src/agora/`:
 
-Python package `agora` under `src/agora/`. Paths below are relative to it.
+- `server.py`, `auth.py`, `config.py`: MCP wiring, inbound token validation, settings (exist).
+- `gate.py`: the confirmation gate (plans, single-use tokens, caps, write switch).
+- `sanitise.py`: length-limiting and cleaning of remote text.
+- `staging.py`: image staging (validation, re-encoding, EXIF stripping, single-use public URLs).
+- `olx/`: HTTP client, OAuth consent and token store, pydantic models for OLX payloads, mapping from a listing draft to the OLX advert body.
 
-- `src/server/`: MCP wiring, tool definitions, confirmation gate, sanitiser.
-- `src/core/`: neutral types (`Listing`, `SearchQuery`, `ListingDraft`, `Money`), the `MarketplaceAdapter` interface, the registry, error types.
-- `src/adapters/olx/`: OLX client, auth, mapping between OLX payloads and core types.
-- `src/auth/`: OAuth2 helpers and token storage, shared by adapters.
-- `src/config/`: env and secret loading, validated with pydantic.
-
-### Adapter interface (sketch)
-
-Shown in TypeScript-style pseudo-notation for brevity. The implementation is a Python `Protocol` with pydantic models.
-
-```ts
-interface MarketplaceAdapter {
-  readonly id: string;                  // "olx-ua"
-  readonly capabilities: Set<Capability>; // search | get | create | update | deactivate | categories | images
-  search(q: SearchQuery): Promise<Page<Listing>>;
-  get(id: string): Promise<Listing>;
-  listCategories(parent?: string): Promise<Category[]>;
-  // write operations return a plan first; execute() performs it
-  planCreate(draft: ListingDraft): Promise<WritePlan>;
-  planUpdate(id: string, patch: ListingPatch): Promise<WritePlan>;
-  planDeactivate(id: string): Promise<WritePlan>;
-  execute(plan: WritePlan): Promise<Listing | void>;
-}
-```
-
-Adapter ids name the marketplace (`olx-ua`, later e.g. `prom-ua`). Only Ukrainian marketplaces are supported, so there is no per-country parameterisation of the OLX adapter for now. UNVERIFIED: OLX Ukraine API host, app registration and credentials.
+No adapter interface or registry: there is one marketplace. Keep OLX-specific code inside `olx/` so the rest stays reusable if that ever changes.
 
 ## 4. Tool surface
 
-Marketplace-neutral, all take a `marketplace` argument (an adapter id).
-
 | Tool | Kind | Notes |
 |---|---|---|
-| `marketplaces_list` | read | Adapters configured, with capabilities |
-| `listings_search` | read | query, category, price range, location, sort, page |
-| `listings_get` | read | Single listing by id |
-| `categories_list` | read | Needed to create a valid listing |
-| `my_listings_list` | read | The authenticated user's own listings |
+| `categories_list` | read | OLX categories by parent, and for a leaf category its attribute definitions (`code`, `label`, `validation`, `values`) plus `photos_limit`. Needed to build a valid listing. `category_suggest` (by title) may be folded in |
+| `locations_list` | read | Regions, cities, districts. OLX requires a `city_id` (and `district_id` where the city has districts) |
+| `my_listings_list` | read | The user's own listings with status and moderation state, to confirm a created listing |
+| `threads_list` | read | The owner's message threads, optionally per listing (`advert_id`), with unread counts. Read only |
+| `messages_list` | read | Messages in a thread. Buyer text is untrusted (see 5). There is no tool to reply, mark as read or otherwise change a thread |
 | `images_stage` | write (local only) | Takes a file attached in the ChatGPT conversation (`openai/fileParams`), stores it in a local staging area and returns an `image_id`. No remote write. See 4.1 |
 | `listing_create_preview` | plan | Validates a draft and returns a plan plus a confirmation token. No remote write |
-| `listing_update_preview` | plan | Same, for updates |
-| `listing_deactivate_preview` | plan | Same, for deactivate/delete |
 | `write_confirm` | write | Executes a previously previewed plan given its token |
 
 The server uses stateless JSON responses (`stateless_http`, `json_response`): there are no server-initiated messages, so no long-lived SSE stream for Cloudflare or a proxy to buffer or cut.
@@ -101,11 +71,11 @@ Goal: the user shares photos in the chat ("sell this, here are the pictures") an
 - Never accept plain URLs or base64 from the model in place of file params in v1. Add a fallback only if testing shows file params are unreliable.
 - Never touches the marketplace at this step.
 - `ListingDraft.images` holds `image_id`s, not bytes or URLs. Previews list them so the human sees what will be uploaded.
-- Only on `write_confirm` does the adapter upload the staged bytes to the marketplace, in the way its API requires (multipart versus URL: UNVERIFIED for OLX UA, see open question 3).
+- Only on `write_confirm` does the OLX client hand the images to OLX. **OLX accepts image URLs only** (`images: [{url}]`, no upload endpoint) and fetches them itself, so during `write_confirm` the staged image is served at a public, unguessable, single-use URL (random 256-bit path, valid for minutes, deleted after first successful fetch or on expiry, served only while a confirmed write is in flight). This is the one public route besides `/mcp` and the OAuth metadata, and an explicit exception to section 5: it serves only staged, EXIF-stripped, re-encoded images, never lists anything, and returns 404 otherwise. Format and size limits OLX enforces on fetched images: UNVERIFIED (per-category `photos_limit` is documented).
 - Validation at staging: allow-list of types (JPEG, PNG, WebP) by magic bytes, not by filename or claimed MIME. Size and count caps (`AGORA_MAX_IMAGE_BYTES`, `AGORA_MAX_IMAGES_PER_LISTING`). Decode-check the image.
 - Privacy: strip EXIF and other metadata (notably GPS location) before storing. Re-encode rather than passing the original through.
 - Staged files live in `AGORA_DATA_DIR/staging`, mode 0600, random names, short TTL (default 24 h), deleted after a successful upload. Request body size is capped before reading it fully.
-- UNVERIFIED in practice: public reports say file params behave inconsistently across ChatGPT surfaces (mobile uploads sending incomplete references, and some connectors never receiving hydrated file objects; see [apps-sdk-examples#185](https://github.com/openai/openai-apps-sdk-examples/issues/185)). Task 0001 must test with the user's real ChatGPT (web and mobile) and record the result. If unreliable, fallback options are an authenticated `POST /images` upload route the user uses directly, or a tool taking a URL.
+- UNVERIFIED in practice: public reports say file params behave inconsistently across ChatGPT surfaces (mobile uploads sending incomplete references, and some connectors never receiving hydrated file objects; see [apps-sdk-examples#185](https://github.com/openai/openai-apps-sdk-examples/issues/185)). The Notion task "Agora: OLX MCP server" (step 4) must test with the user's real ChatGPT (web and mobile) and record the result. If unreliable, fallback options are an authenticated `POST /images` upload route the user uses directly, or a tool taking a URL.
 - Prompt-injection note: text inside images (OCR-like content the model reads) is untrusted, same as listing text.
 
 ## 5. Security model
@@ -117,17 +87,19 @@ Threats, in order of concern:
 3. **Runaway agent**: loops creating listings or hammering the API and getting the account banned.
 4. **Supply chain**: dependency compromise.
 5. **Exposure**: server reachable by something it shouldn't be.
+6. **Prompt injection via buyer messages**: strangers write the text the model reads in `messages_list`. Mitigated by having no message-sending tool at all, by sanitising, and by the confirmation gate on the only remote write.
 
 Mitigations:
 
 - **Confirmation gate.** `*_preview` tools store the plan server-side, keyed by a random single-use token bound to the exact payload hash, with a short TTL (default 10 min). `write_confirm` accepts only the token, so the payload cannot change between preview and execute. Preview output is what the human reviews.
-- **Config-level write switch.** Writes are disabled unless `AGORA_WRITES=enabled`. A per-marketplace and per-day cap on writes (`AGORA_MAX_WRITES_PER_DAY`, default 10).
+- **Config-level write switch.** Writes are disabled unless `AGORA_WRITES=enabled`. A per-day cap on writes (`AGORA_MAX_WRITES_PER_DAY`, default 10; a created listing counts once).
+- **Messages are read-only.** `threads_list` and `messages_list` return sanitised, length-limited text as data fields. No tool sends, edits or marks messages, so a hostile message cannot cause an outbound message.
 - **Sanitising.** All remote text is length-limited, control characters stripped, and wrapped in the tool result as data fields. Output never includes upstream error bodies.
 - **Secrets.** Read from env or `*_FILE` paths (Docker secrets). Token store on a mounted volume with mode 0600. Redaction of known secret values in logs.
 - **Least privilege.** Request the minimum OAuth scopes per operation. Read-only mode requests read scopes only.
 - **Rate limiting** and retry with backoff in the shared HTTP client. Honour `Retry-After`. Hard cap on retries.
 - **Supply chain.** Few dependencies, pinned, `uv sync --frozen`, lockfile committed, `pip-audit` in CI.
-- **Deployment.** Container runs as non-root, read-only rootfs, `--cap-drop ALL`, and the HTTP port reachable only via Traefik. ChatGPT calls the connector from OpenAI's cloud, so the `/mcp` endpoint must be reachable over public HTTPS. Decided: a Cloudflare Tunnel (`cloudflared` on theseus, outbound connection only, no inbound ports or router port forward; Cloudflare terminates TLS and forwards to Traefik on the internal network). No Cloudflare Access policy may sit in front of these hostnames. Every request must carry a valid OAuth access token (section 7), verified for signature, expiry, issuer and audience. Validate `Host` against an allow-list on every route (no cookies or browser-held credentials are used, so an Origin check adds little; FastMCP's own guard covers `/mcp`). Expose only `/mcp` and the OAuth metadata paths. Traefik trusts forwarded headers only from `cloudflared`. Restricting to OpenAI's published egress IPs is UNVERIFIED and probably impractical behind Cloudflare.
+- **Deployment.** Container runs as non-root, read-only rootfs, `--cap-drop ALL`, and the HTTP port reachable only via Traefik. ChatGPT calls the connector from OpenAI's cloud, so the `/mcp` endpoint must be reachable over public HTTPS. Decided: a Cloudflare Tunnel (`cloudflared` on theseus, outbound connection only, no inbound ports or router port forward; Cloudflare terminates TLS and forwards to Traefik on the internal network). No Cloudflare Access policy may sit in front of these hostnames. Every request must carry a valid OAuth access token (section 7), verified for signature, expiry, issuer and audience. Validate `Host` against an allow-list on every route (no cookies or browser-held credentials are used, so an Origin check adds little; FastMCP's own guard covers `/mcp`). Expose only `/mcp`, the OAuth metadata paths, the OLX consent callback (section 7) and the single-use staged-image route (4.1). Traefik trusts forwarded headers only from `cloudflared`. Restricting to OpenAI's published egress IPs is UNVERIFIED and probably impractical behind Cloudflare.
 - **Egress.** The marketplace API hosts, plus the HTTPS hosts serving ChatGPT file download URLs (UNVERIFIED which; do not hard-code, learn from testing) and the OAuth provider. SSRF guards in 4.1 apply.
 
 ## 6. Configuration
@@ -136,7 +108,6 @@ Environment variables (secrets via `_FILE` variants):
 
 | Var | Purpose |
 |---|---|
-| `AGORA_MARKETPLACES` | Comma list of enabled adapters, e.g. `olx-ua` |
 | `AGORA_WRITES` | `enabled` to allow writes, otherwise read-only |
 | `AGORA_MAX_WRITES_PER_DAY` | Write cap |
 | `AGORA_DATA_DIR` | Token store and state |
@@ -145,7 +116,7 @@ Environment variables (secrets via `_FILE` variants):
 | `AGORA_OWNER_SUBJECT` | The Keycloak `sub` of the one allowed user |
 | `AGORA_PORT`, `AGORA_EXTRA_ALLOWED_HOSTS`, `AGORA_ALLOWED_ORIGINS` | Listen port, extra allowed Host values, allowed Origin values |
 | `AGORA_MAX_IMAGE_BYTES`, `AGORA_MAX_IMAGES_PER_LISTING` | Image caps |
-| `OLX_UA_CLIENT_ID`, `OLX_UA_CLIENT_SECRET` | OAuth app credentials (UNVERIFIED naming of what OLX issues) |
+| `OLX_CLIENT_ID`, `OLX_CLIENT_SECRET` (or `_FILE` variants) | Credentials of the OLX app registered on developer.olx.ua |
 
 ## 7. Auth
 
@@ -162,13 +133,17 @@ Decision: a self-hosted **Keycloak** on theseus is the authorization server (the
 - **Hostnames (example values; the real ones live only in the local `.env`):** `keycloak.example.com` and `agora.example.com` (DNS in Cloudflare). OLX callback: `https://agora.example.com/oauth/olx/callback`.
 - **Verified with the real ChatGPT (2026-09-19):** DCR works (CIMD off); redirect URI `https://chatgpt.com/connector_platform_oauth_redirect`; PKCE S256; token `aud` = the origin while the metadata `resource` is `<origin>/mcp` (accepted); ChatGPT requires the RFC 8414 metadata URL `/.well-known/oauth-authorization-server/<realm path>` to be publicly reachable. ChatGPT calls from OpenAI's published egress ranges (`https://openai.com/chatgpt-connectors.json`) with an `aiohttp` user agent.
 - **Cloudflare:** Bot Fight Mode challenges OpenAI's server-side requests (403 to the client). On the Free plan WAF Skip rules cannot skip it, so it has to be disabled, or the OpenAI ranges allowed by IP Access Rules, or the hostnames moved to a zone without it. Decision: it is disabled zone-wide for now (weaker bot filtering for every hostname on the zone). If the plan is upgraded, re-enable it as Super Bot Fight Mode with a skip rule for the OAuth and MCP paths.
-- **Spike first** (task 0002): a ChatGPT connector against Keycloak with a dummy tool must work end to end before marketplace work depends on it.
+- **Spike first** (done: Notion task "Keycloak on theseus (auth for Agora)"): a ChatGPT connector against Keycloak with a dummy tool must work end to end before marketplace work depends on it.
 - **Fallback** if the spike fails: an embedded thin authorization server in Agora, delegating login to Google.
 - Other self-hosted options were considered (Authentik, Zitadel, Ory Hydra, Authelia, Pocket ID). Keycloak is the only one confirmed to work as an MCP authorization server; the others are UNVERIFIED for DCR.
 
-**Agora to marketplace (outbound).** OAuth2 per marketplace. For OLX, the developer portal's "Add app" form (Ukrainian UI) asks for app name, website URL, **callback URI (required)** and description. Plan: callback URI is `https://<AGORA_PUBLIC_HOST>/oauth/olx/callback`, served by Agora itself, since it is public anyway. The consent flow is started only from an authenticated owner session, uses a random single-use `state` bound to that session, and the resulting tokens go to the token store, never to the model. Fall back to a `localhost` callback with the CLI only if OLX allows it (UNVERIFIED). The app name entered is "Agora".
+**Agora to marketplace (outbound).** OAuth2 per marketplace. For OLX, the developer portal's "Add app" form (Ukrainian UI) asks for app name, website URL, **callback URI (required)** and description. Plan: callback URI is `https://<AGORA_PUBLIC_HOST>/oauth/olx/callback`, served by Agora itself, since it is public anyway. The consent flow is started only from an authenticated owner session, uses a random single-use `state` bound to that session, and the resulting tokens go to the token store, never to the model. Decision (2026-09-20): no `localhost` callback; OLX is assumed not to accept it (UNVERIFIED) and consent is tested on the deployed server. This makes `/oauth/olx/callback` a public route, so it must reject any request whose `state` is not a live, single-use value issued to the owner's session, and it exposes nothing else. The app name entered is "Agora".
 
-Verified from OLX's official portal (developer.olx.ua, 2026-09-19): Partner API base `https://www.olx.ua/api/partner`, version 2.0 (header `Version: 2.0`); authorization code flow with authorize URL `https://www.olx.ua/oauth/authorize`, token and refresh URL `https://www.olx.ua/api/open/oauth/token`; scopes `v2`, `read`, `write`. Actions in a user context (adding an ad) need the authorization code grant. Limit: 4500 requests per 5 minutes per IP, then 403 and a 30-minute block. The refresh token is valid one month and may change on refresh, so the token store must always save the newest one. Callback URIs are managed under "Your Apps", several allowed, space-separated. Still UNVERIFIED: whether OLX accepts a private (non-business) account, and whether `localhost`/`http` callbacks are allowed. UNVERIFIED for OLX: which grant types are available (authorization code with user consent versus client credentials), whether refresh tokens are issued, token lifetimes, and whether a private user can register an app. A one-time CLI command (`agora auth <marketplace>`) performs the interactive consent on a machine with a browser and writes tokens to the data dir. The server itself never opens a browser.
+Verified from OLX's official portal (developer.olx.ua, 2026-09-19): Partner API base `https://www.olx.ua/api/partner`, version 2.0 (header `Version: 2.0`); authorization code flow with authorize URL `https://www.olx.ua/oauth/authorize`, token and refresh URL `https://www.olx.ua/api/open/oauth/token`; scopes `v2`, `read`, `write`. Actions in a user context (adding an ad) need the authorization code grant. Limit: 4500 requests per 5 minutes per IP, then 403 and a 30-minute block. The refresh token is valid one month and may change on refresh, so the token store must always save the newest one. Callback URIs are managed under "Your Apps", several allowed, space-separated. Still UNVERIFIED: whether OLX accepts a private (non-business) account (the owner reports API access was granted, 2026-09-20), and whether `localhost`/`http` callbacks are allowed. UNVERIFIED for OLX: which grant types are available (authorization code with user consent versus client credentials), whether refresh tokens are issued, token lifetimes, and whether a private user can register an app.
+
+Verified from OLX's official spec (https://developer.olx.ua/swagger/v2/partner_api.yaml, read 2026-09-20) and FAQ (https://developer.olx.ua/articles/faq): `GET /adverts` is "Get user adverts" (own only; params `offset`, `limit` max 1000, `external_id`, `category_ids`); the FAQ states other users' ads cannot be accessed. Create/update `title` 16-150 chars, `description` 80-9000, leaf `category_id`, `advertiser_type`, `contact.name`, `location.city_id`, category `attributes`; `images` are `[{url}]` only. `POST /adverts/{id}/commands` takes `activate | deactivate | finish | extend`; DELETE requires a non-active advert. Threads API: `GET /threads`, `GET/POST /threads/{id}/messages`, `POST /threads/{id}/commands` (`mark-as-read`, `set-favourite`), addressed by `uuid`, scopes `read` and `write`; no endpoint starts a new thread. Errors are `{error: {status, title, detail, validation[]}}`.
+
+A one-time CLI command (`agora auth olx`) performs the interactive consent on a machine with a browser and writes tokens to the data dir. The server itself never opens a browser.
 
 ## 8. Deployment
 
@@ -182,9 +157,9 @@ Target: the `theseus` home NAS as a Docker container. Transport is Streamable HT
 
 ## 10. Open questions
 
-1. Does OLX Ukraine offer API access to a private (non-business) user, and what does registration involve? (blocks task 0001)
+1. Does OLX Ukraine offer API access to a private (non-business) user, and what does registration involve? (blocks the Notion task "Agora: OLX MCP server")
 2. ~~Which country?~~ Resolved: Ukraine only, for now.
-3. Image upload for new listings: what the OLX UA API accepts (URLs versus multipart), and whether ChatGPT file params work reliably for images (see 4.1).
+3. Image upload for new listings: ~~what OLX accepts~~ resolved: public URLs only (4.1). Still open: OLX's format and size limits for fetched images, and whether ChatGPT file params work reliably for images.
 4. Category attribute schemas: OLX categories require category-specific fields. How much of this do we model versus pass through as validated key-value pairs?
 5. ~~Language/runtime~~ Resolved: Python 3.12+ with FastMCP (built on the official MCP SDK).
 6. ~~Inbound identity provider~~ Decided: Keycloak, with Google as a brokered login method (section 7). Still to verify in the spike: DCR versus CIMD, and audience binding.

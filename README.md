@@ -12,18 +12,18 @@
   <img alt="Marketplace: OLX Ukraine" src="https://img.shields.io/badge/marketplace-OLX%20Ukraine-23e5db">
 </p>
 
-A self-hosted [MCP](https://modelcontextprotocol.io) server that lets an AI agent search, create and manage listings on online Ukrainian marketplaces, through one marketplace-neutral tool surface.
+A self-hosted [MCP](https://modelcontextprotocol.io) server that lets an AI agent create new listings on OLX Ukraine, with photos from the chat, through OLX's official API and behind a confirmation step.
 
-**Scope: Ukrainian marketplaces only, for now.** OLX Ukraine (olx.ua) is the first integration. Other Ukrainian marketplaces (Prom, Rozetka, ...) plug in as adapters. Marketplaces in other countries are out of scope.
+**Scope: OLX Ukraine (olx.ua), creating listings only.** OLX's official API manages your own account and offers no search over other people's listings, so there is no search tool. You can also read your own message threads (read-only). Other marketplaces and countries are out of scope.
 
 ## Status
 
-Pre-alpha. A dummy server (`ping` tool) with Keycloak token validation exists, to prove the ChatGPT connector chain. No marketplace adapters yet. Python and [FastMCP](https://gofastmcp.com), served over Streamable HTTP, targeting ChatGPT as the client. See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/tasks/`](docs/tasks/).
+Pre-alpha. A dummy server (`ping` tool) with Keycloak token validation exists, to prove the ChatGPT connector chain. The OLX integration is not built yet. Python and [FastMCP](https://gofastmcp.com), served over Streamable HTTP, targeting ChatGPT as the client. See [`docs/DESIGN.md`](docs/DESIGN.md); tasks are tracked in Notion (Digital Home, project Agora).
 
 ## Goals
 
 - **Official APIs only.** No browser automation and no scraping. If a marketplace has no usable API, it is not supported.
-- **Read and write.** Search, fetch details, and create, update and deactivate listings.
+- **Create listings.** Look up categories, attributes and locations, preview a draft, then confirm to publish. Read your own listings to check the result.
 - **Images from the conversation.** Photos the user shares in the chat can be staged and attached to a new listing.
 - **Safe by default.** Every write needs explicit confirmation, secrets never enter the model's context, and marketplace content is treated as untrusted.
 - **Small and boring.** One process, no headless browser, runs in a locked-down container on a home server.
@@ -54,7 +54,6 @@ src/agora/         server, auth, config
 tests/             pytest suite
 docs/FLOWS.md      sequence diagrams of the auth and listing flows
 docs/DESIGN.md     architecture, tool surface, security model
-docs/tasks/        task ledger (one file per task, index in README)
 AGENTS.md          instructions for AI coding agents working on this repo
 ```
 
